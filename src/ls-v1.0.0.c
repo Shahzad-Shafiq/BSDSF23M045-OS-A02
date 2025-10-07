@@ -13,6 +13,9 @@
 #include <pwd.h>        // NEW (for getpwuid)
 #include <grp.h>        // NEW (for getgrgid)
 #include <time.h>       // NEW (for ctime)
+#include <sys/ioctl.h>
+#include <termios.h>     // <-- Optional (some systems need it)
+
 
 extern int errno;
 
@@ -126,25 +129,93 @@ void do_ls(const char *dir)
     DIR *dp = opendir(dir);
     if (dp == NULL)
     {
-        fprintf(stderr, "Cannot open directory : %s\n", dir);
+        fprintf(stderr, "Cannot open directory: %s\n", dir);
         return;
     }
 
-    errno = 0;
+    // --- Step 1: Gather filenames ---
+    char **names = NULL;
+    int count = 0;
+    int capacity = 100;
+    int maxlen = 0;
+
+    names = malloc(capacity * sizeof(char *));
+    if (!names)
+    {
+        perror("malloc");
+        closedir(dp);
+        return;
+    }
+
     while ((entry = readdir(dp)) != NULL)
     {
         if (entry->d_name[0] == '.')
             continue;
-        printf("%s\n", entry->d_name);
-    }
 
-    if (errno != 0)
-    {
-        perror("readdir failed");
-    }
+        if (count >= capacity)
+        {
+            capacity *= 2;
+            names = realloc(names, capacity * sizeof(char *));
+            if (!names)
+            {
+                perror("realloc");
+                closedir(dp);
+                return;
+            }
+        }
 
+        names[count] = strdup(entry->d_name);
+        if (!names[count])
+        {
+            perror("strdup");
+            closedir(dp);
+            return;
+        }
+
+        int len = strlen(entry->d_name);
+        if (len > maxlen)
+            maxlen = len;
+
+        count++;
+    }
     closedir(dp);
+
+    if (count == 0)
+    {
+        free(names);
+        return;
+    }
+
+    // --- Step 2: Determine terminal width ---
+    struct winsize ws;
+    int term_width = 80; // fallback
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0)
+        term_width = ws.ws_col;
+
+    int spacing = 2;
+    int col_width = maxlen + spacing;
+    int num_cols = term_width / col_width;
+    if (num_cols < 1) num_cols = 1;
+    int num_rows = (count + num_cols - 1) / num_cols;
+
+    // --- Step 3: Print in "down then across" format ---
+    for (int r = 0; r < num_rows; r++)
+    {
+        for (int c = 0; c < num_cols; c++)
+        {
+            int index = r + c * num_rows;
+            if (index < count)
+                printf("%-*s", col_width, names[index]);
+        }
+        printf("\n");
+    }
+
+    // --- Step 4: Cleanup ---
+    for (int i = 0; i < count; i++)
+        free(names[i]);
+    free(names);
 }
+
 
 void do_ls_long(const char *dir)
 {
