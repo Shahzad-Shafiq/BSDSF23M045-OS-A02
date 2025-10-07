@@ -1,12 +1,8 @@
 /*
-* Programming Assignment 02: lsv1.0.0
-* This is the source file of version 1.0.0
-* Read the write-up of the assignment to add the features to this base version
-* Usage:
-*       $ lsv1.0.0 
-*       % lsv1.0.0  /home
-*       $ lsv1.0.0  /home/kali/   /etc/
+* Programming Assignment 02: ls-v1.1.0
+* Feature: Add -l (long listing format)
 */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -14,27 +10,114 @@
 #include <string.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <pwd.h>        // NEW (for getpwuid)
+#include <grp.h>        // NEW (for getgrgid)
+#include <time.h>       // NEW (for ctime)
 
 extern int errno;
 
 void do_ls(const char *dir);
+void do_ls_long(const char *dir);   // NEW
 
-int main(int argc, char const *argv[])
+int main(int argc, char *argv[])    // changed const char* → char*
 {
-    if (argc == 1)
+    int opt;
+    int long_format = 0;
+
+    // --- NEW: Argument parsing using getopt ---
+    while ((opt = getopt(argc, argv, "l")) != -1)
     {
-        do_ls(".");
+        switch (opt)
+        {
+        case 'l':
+            long_format = 1;
+            break;
+        default:
+            fprintf(stderr, "Usage: %s [-l] [directory...]\n", argv[0]);
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    // --- Logic based on -l presence ---
+    if (optind == argc)
+    {
+        if (long_format)
+            do_ls_long(".");
+        else
+            do_ls(".");
     }
     else
     {
-        for (int i = 1; i < argc; i++)
+        for (int i = optind; i < argc; i++)
         {
             printf("Directory listing of %s : \n", argv[i]);
-            do_ls(argv[i]);
-	    puts("");
+            if (long_format)
+                do_ls_long(argv[i]);
+            else
+                do_ls(argv[i]);
+            puts("");
         }
     }
     return 0;
+}
+
+
+void mode_to_letters(mode_t mode, char str[])
+{
+    strcpy(str, "----------");
+
+    // File type
+    if (S_ISDIR(mode)) str[0] = 'd';
+    else if (S_ISCHR(mode)) str[0] = 'c';
+    else if (S_ISBLK(mode)) str[0] = 'b';
+    else if (S_ISLNK(mode)) str[0] = 'l';
+    else if (S_ISSOCK(mode)) str[0] = 's';
+    else if (S_ISFIFO(mode)) str[0] = 'p';
+
+    // User permissions
+    if (mode & S_IRUSR) str[1] = 'r';
+    if (mode & S_IWUSR) str[2] = 'w';
+    if (mode & S_IXUSR) str[3] = 'x';
+
+    // Group permissions
+    if (mode & S_IRGRP) str[4] = 'r';
+    if (mode & S_IWGRP) str[5] = 'w';
+    if (mode & S_IXGRP) str[6] = 'x';
+
+    // Others permissions
+    if (mode & S_IROTH) str[7] = 'r';
+    if (mode & S_IWOTH) str[8] = 'w';
+    if (mode & S_IXOTH) str[9] = 'x';
+
+    str[10] = '\0';
+}
+
+void print_long_format(const char *path, const char *filename)
+{
+    struct stat info;
+    if (lstat(path, &info) == -1)
+    {
+        perror("lstat");
+        return;
+    }
+
+    char mode_str[11];
+    mode_to_letters(info.st_mode, mode_str);
+
+    struct passwd *pw = getpwuid(info.st_uid);
+    struct group *gr = getgrgid(info.st_gid);
+
+    char *time_str = ctime(&info.st_mtime);
+    time_str[strlen(time_str) - 1] = '\0'; 
+
+    printf("%s %3lu %-8s %-8s %8ld %s %s\n",
+           mode_str,
+           info.st_nlink,
+           pw ? pw->pw_name : "unknown",
+           gr ? gr->gr_name : "unknown",
+           info.st_size,
+           time_str + 4, 
+           filename);
 }
 
 void do_ls(const char *dir)
@@ -46,6 +129,7 @@ void do_ls(const char *dir)
         fprintf(stderr, "Cannot open directory : %s\n", dir);
         return;
     }
+
     errno = 0;
     while ((entry = readdir(dp)) != NULL)
     {
@@ -61,3 +145,32 @@ void do_ls(const char *dir)
 
     closedir(dp);
 }
+
+void do_ls_long(const char *dir)
+{
+    struct dirent *entry;
+    DIR *dp = opendir(dir);
+
+    if (dp == NULL)
+    {
+        fprintf(stderr, "Cannot open directory: %s\n", dir);
+        return;
+    }
+
+    errno = 0;
+    while ((entry = readdir(dp)) != NULL)
+    {
+        if (entry->d_name[0] == '.')
+            continue;
+
+        char path[1024];
+        snprintf(path, sizeof(path), "%s/%s", dir, entry->d_name);
+        print_long_format(path, entry->d_name);
+    }
+
+    if (errno != 0)
+        perror("readdir failed");
+
+    closedir(dp);
+}
+
