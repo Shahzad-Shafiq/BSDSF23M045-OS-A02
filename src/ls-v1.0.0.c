@@ -25,6 +25,8 @@ extern int errno;
 void do_ls(const char *dir, int display_mode);
 void do_ls_long(const char *dir);
 void display_horizontal(char **names, int count, int maxlen);
+void display_vertical(char **names, int count, int maxlen);
+int compare_names(const void *a, const void *b);
 
 int main(int argc, char *argv[])
 {
@@ -130,7 +132,7 @@ void print_long_format(const char *path, const char *filename)
            filename);
 }
 
-void do_ls(const char *dir,int display_mode)
+void do_ls(const char *dir, int display_mode)
 {
     struct dirent *entry;
     DIR *dp = opendir(dir);
@@ -140,30 +142,31 @@ void do_ls(const char *dir,int display_mode)
         return;
     }
 
-    // --- Step 1: Gather filenames ---
     char **names = NULL;
     int count = 0;
     int capacity = 100;
-    int maxlen = 0;
-
     names = malloc(capacity * sizeof(char *));
-    if (!names)
+    if (names == NULL)
     {
         perror("malloc");
         closedir(dp);
         return;
     }
 
+    int maxlen = 0;
+    errno = 0;
+
+    // --- Read all filenames into memory ---
     while ((entry = readdir(dp)) != NULL)
     {
         if (entry->d_name[0] == '.')
-            continue;
+            continue; // skip hidden files
 
         if (count >= capacity)
         {
             capacity *= 2;
             names = realloc(names, capacity * sizeof(char *));
-            if (!names)
+            if (names == NULL)
             {
                 perror("realloc");
                 closedir(dp);
@@ -172,7 +175,7 @@ void do_ls(const char *dir,int display_mode)
         }
 
         names[count] = strdup(entry->d_name);
-        if (!names[count])
+        if (names[count] == NULL)
         {
             perror("strdup");
             closedir(dp);
@@ -185,6 +188,10 @@ void do_ls(const char *dir,int display_mode)
 
         count++;
     }
+
+    if (errno != 0)
+        perror("readdir failed");
+
     closedir(dp);
 
     if (count == 0)
@@ -193,43 +200,28 @@ void do_ls(const char *dir,int display_mode)
         return;
     }
 
-    // --- Step 2: Determine terminal width ---
-    struct winsize ws;
-    int term_width = 80; // fallback
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0)
-        term_width = ws.ws_col;
+    // --- FEATURE 5: Alphabetical Sorting using qsort ---
+    qsort(names, count, sizeof(char *), compare_names);
 
-    int spacing = 2;
-    int col_width = maxlen + spacing;
-    int num_cols = term_width / col_width;
-    if (num_cols < 1) num_cols = 1;
-    int num_rows = (count + num_cols - 1) / num_cols;
-
-    // --- Step 3: Print according to selected display mode ---
-    if (display_mode == MODE_HORIZONTAL)
-    {	
-    	display_horizontal(names, count, maxlen);
-    }
+    // --- Display mode selection ---
+    if (display_mode == MODE_LONG)
+        do_ls_long(dir);
+    else if (display_mode == MODE_HORIZONTAL)
+        display_horizontal(names, count, maxlen);
     else
-    {
-       // Default: Down then across
-        for (int r = 0; r < num_rows; r++)
-        { 
-            for (int c = 0; c < num_cols; c++)
-            {
-                int index = r + c * num_rows;
-                if (index < count)
-                   printf("%-*s", col_width, names[index]);
-            }
-            printf("\n");
-        }
-    }
+        display_vertical(names, count, maxlen);
 
-
-    // --- Step 4: Cleanup ---
+    // --- Free dynamically allocated memory ---
     for (int i = 0; i < count; i++)
         free(names[i]);
     free(names);
+}
+
+int compare_names(const void *a, const void *b)
+{
+    const char *nameA = *(const char **)a;
+    const char *nameB = *(const char **)b;
+    return strcmp(nameA, nameB);
 }
 
 void display_horizontal(char **names, int count, int maxlen)
@@ -283,5 +275,34 @@ void do_ls_long(const char *dir)
         perror("readdir failed");
 
     closedir(dp);
+}
+
+void display_vertical(char **names, int count, int maxlen)
+{
+    struct winsize ws;
+
+    // --- Get terminal width ---
+    int term_width = 80; // default fallback width
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0)
+        term_width = ws.ws_col;
+
+    int spacing = 2;
+    int col_width = maxlen + spacing;
+    int cols = term_width / col_width;
+    if (cols < 1) cols = 1;
+
+    int rows = (count + cols - 1) / cols; // ceiling division
+
+    // --- Print "down then across" ---
+    for (int r = 0; r < rows; r++)
+    {
+        for (int c = 0; c < cols; c++)
+        {
+            int index = c * rows + r;
+            if (index < count)
+                printf("%-*s", col_width, names[index]);
+        }
+        printf("\n");
+    }
 }
 
