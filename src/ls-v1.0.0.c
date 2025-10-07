@@ -14,55 +14,62 @@
 #include <grp.h>        // NEW (for getgrgid)
 #include <time.h>       // NEW (for ctime)
 #include <sys/ioctl.h>
-#include <termios.h>     // <-- Optional (some systems need it)
+#include <termios.h>     // 
 
+#define MODE_DEFAULT 0
+#define MODE_LONG 1
+#define MODE_HORIZONTAL 2
 
 extern int errno;
 
-void do_ls(const char *dir);
-void do_ls_long(const char *dir);   // NEW
+void do_ls(const char *dir, int display_mode);
+void do_ls_long(const char *dir);
+void display_horizontal(char **names, int count, int maxlen);
 
-int main(int argc, char *argv[])    // changed const char* → char*
+int main(int argc, char *argv[])
 {
     int opt;
-    int long_format = 0;
+    int display_mode = MODE_DEFAULT;
 
-    // --- NEW: Argument parsing using getopt ---
-    while ((opt = getopt(argc, argv, "l")) != -1)
+    while ((opt = getopt(argc, argv, "lx")) != -1)
     {
         switch (opt)
         {
         case 'l':
-            long_format = 1;
+            display_mode = MODE_LONG;
+            break;
+        case 'x':
+            display_mode = MODE_HORIZONTAL;
             break;
         default:
-            fprintf(stderr, "Usage: %s [-l] [directory...]\n", argv[0]);
+            fprintf(stderr, "Usage: %s [-l | -x] [directory...]\n", argv[0]);
             exit(EXIT_FAILURE);
         }
     }
 
-    // --- Logic based on -l presence ---
     if (optind == argc)
     {
-        if (long_format)
+        if (display_mode == MODE_LONG)
             do_ls_long(".");
         else
-            do_ls(".");
+            do_ls(".", display_mode);
     }
     else
     {
         for (int i = optind; i < argc; i++)
         {
-            printf("Directory listing of %s : \n", argv[i]);
-            if (long_format)
+            printf("Directory listing of %s:\n", argv[i]);
+            if (display_mode == MODE_LONG)
                 do_ls_long(argv[i]);
             else
-                do_ls(argv[i]);
+                do_ls(argv[i], display_mode);
             puts("");
         }
     }
+
     return 0;
 }
+
 
 
 void mode_to_letters(mode_t mode, char str[])
@@ -123,7 +130,7 @@ void print_long_format(const char *path, const char *filename)
            filename);
 }
 
-void do_ls(const char *dir)
+void do_ls(const char *dir,int display_mode)
 {
     struct dirent *entry;
     DIR *dp = opendir(dir);
@@ -198,17 +205,26 @@ void do_ls(const char *dir)
     if (num_cols < 1) num_cols = 1;
     int num_rows = (count + num_cols - 1) / num_cols;
 
-    // --- Step 3: Print in "down then across" format ---
-    for (int r = 0; r < num_rows; r++)
-    {
-        for (int c = 0; c < num_cols; c++)
-        {
-            int index = r + c * num_rows;
-            if (index < count)
-                printf("%-*s", col_width, names[index]);
-        }
-        printf("\n");
+    // --- Step 3: Print according to selected display mode ---
+    if (display_mode == MODE_HORIZONTAL)
+    {	
+    	display_horizontal(names, count, maxlen);
     }
+    else
+    {
+       // Default: Down then across
+        for (int r = 0; r < num_rows; r++)
+        { 
+            for (int c = 0; c < num_cols; c++)
+            {
+                int index = r + c * num_rows;
+                if (index < count)
+                   printf("%-*s", col_width, names[index]);
+            }
+            printf("\n");
+        }
+    }
+
 
     // --- Step 4: Cleanup ---
     for (int i = 0; i < count; i++)
@@ -216,6 +232,30 @@ void do_ls(const char *dir)
     free(names);
 }
 
+void display_horizontal(char **names, int count, int maxlen)
+{
+    struct winsize ws;
+    int term_width = 80; // fallback
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0)
+        term_width = ws.ws_col;
+
+    int spacing = 2;
+    int col_width = maxlen + spacing;
+    int current_width = 0;
+
+    for (int i = 0; i < count; i++)
+    {
+        if (current_width + col_width > term_width)
+        {
+            printf("\n");
+            current_width = 0;
+        }
+
+        printf("%-*s", col_width, names[i]);
+        current_width += col_width;
+    }
+    printf("\n");
+}
 
 void do_ls_long(const char *dir)
 {
