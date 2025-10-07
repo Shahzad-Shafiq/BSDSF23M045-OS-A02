@@ -19,14 +19,80 @@
 #define MODE_DEFAULT 0
 #define MODE_LONG 1
 #define MODE_HORIZONTAL 2
+/* Color macros */
+#define ANSI_RESET     "\033[0m"
+#define ANSI_BLUE      "\033[0;34m"  /* directories */
+#define ANSI_GREEN     "\033[0;32m"  /* executables */
+#define ANSI_RED       "\033[0;31m"  /* tarballs / archives */
+#define ANSI_MAGENTA   "\033[0;35m"  /* symlinks (pink/magenta) */
+#define ANSI_REVERSE   "\033[7m"     /* special files */
 
 extern int errno;
 
+void print_name_colored(const char *dir, const char *name, int width);
 void do_ls(const char *dir, int display_mode);
 void do_ls_long(const char *dir);
-void display_horizontal(char **names, int count, int maxlen);
-void display_vertical(char **names, int count, int maxlen);
+void display_horizontal(const char *dir, char **names, int count, int maxlen);
+void display_vertical(const char *dir, char **names, int count, int maxlen);
 int compare_names(const void *a, const void *b);
+
+void print_name_colored(const char *dir, const char *name, int width)
+{
+    char path[1024];
+    struct stat st;
+
+    if (dir && dir[0] != '\0') {
+        /* build path = dir/name, careful about trailing slash */
+        snprintf(path, sizeof(path), "%s/%s", dir, name);
+    } else {
+        snprintf(path, sizeof(path), "%s", name);
+    }
+
+    /* Use lstat so we can detect symlinks */
+    if (lstat(path, &st) == -1) {
+        /* On error, just print without color but preserve padding */
+        printf("%-*s", width, name);
+        return;
+    }
+
+    const char *color = ANSI_RESET;
+
+    /* Symbolic links: magenta */
+    if (S_ISLNK(st.st_mode)) {
+        color = ANSI_MAGENTA;
+    }
+    /* Directories: blue */
+    else if (S_ISDIR(st.st_mode)) {
+        color = ANSI_BLUE;
+    }
+    /* Special files: char/block devices, sockets, fifos -> reverse video */
+    else if (S_ISCHR(st.st_mode) || S_ISBLK(st.st_mode) || S_ISSOCK(st.st_mode) || S_ISFIFO(st.st_mode)) {
+        color = ANSI_REVERSE;
+    }
+    else {
+        /* For regular files, check executability first */
+        if ((st.st_mode & S_IXUSR) || (st.st_mode & S_IXGRP) || (st.st_mode & S_IXOTH)) {
+            color = ANSI_GREEN;
+        } else {
+            /* Check for archive extensions: .tar .tgz .tar.gz .gz .zip */
+            const char *ext = strrchr(name, '.');
+            if (ext) {
+                /* simple extension checks */
+                if (strcmp(ext, ".tar") == 0 || strcmp(ext, ".tgz") == 0 || strcmp(ext, ".zip") == 0 || strcmp(ext, ".gz") == 0) {
+                    color = ANSI_RED;
+                } else {
+                    color = ANSI_RESET; /* default */
+                }
+            } else {
+                color = ANSI_RESET;
+            }
+        }
+    }
+    if (width > 0)
+       printf("%s%-*s%s", color, width, name, ANSI_RESET);
+    else
+       printf("%s%s%s", color, name, ANSI_RESET);
+}
 
 int main(int argc, char *argv[])
 {
@@ -207,9 +273,9 @@ void do_ls(const char *dir, int display_mode)
     if (display_mode == MODE_LONG)
         do_ls_long(dir);
     else if (display_mode == MODE_HORIZONTAL)
-        display_horizontal(names, count, maxlen);
+        display_horizontal(dir, names, count, maxlen);
     else
-        display_vertical(names, count, maxlen);
+        display_vertical(dir, names, count, maxlen);
 
     // --- Free dynamically allocated memory ---
     for (int i = 0; i < count; i++)
@@ -224,7 +290,7 @@ int compare_names(const void *a, const void *b)
     return strcmp(nameA, nameB);
 }
 
-void display_horizontal(char **names, int count, int maxlen)
+void display_horizontal(const char *dir, char **names, int count, int maxlen)
 {
     struct winsize ws;
     int term_width = 80; // fallback
@@ -243,7 +309,7 @@ void display_horizontal(char **names, int count, int maxlen)
             current_width = 0;
         }
 
-        printf("%-*s", col_width, names[i]);
+        print_name_colored(dir, names[i], col_width);
         current_width += col_width;
     }
     printf("\n");
@@ -277,7 +343,7 @@ void do_ls_long(const char *dir)
     closedir(dp);
 }
 
-void display_vertical(char **names, int count, int maxlen)
+void display_vertical(const char *dir, char **names, int count, int maxlen)
 {
     struct winsize ws;
 
@@ -300,7 +366,7 @@ void display_vertical(char **names, int count, int maxlen)
         {
             int index = c * rows + r;
             if (index < count)
-                printf("%-*s", col_width, names[index]);
+                print_name_colored(dir, names[index], col_width);
         }
         printf("\n");
     }
