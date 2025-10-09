@@ -16,7 +16,14 @@ A mode flag variable determined by getopt() controls which display function runs
 ### Feature 6:
 
 ## 1. How do ANSI escape codes work to produce color in a standard Linux terminal?
-ANSI escape codes are special sequences (starting with `\033[` or `\x1B[`) that tell the terminal to change text color or style until a reset code is printed. For example, to print text in green:
-```c
-printf("\033[0;32mHello\033[0m\n");
-Here, \033[0;32m sets the text color to green, and \033[0m resets it back to default.
+ANSI escape codes are special sequences (starting with `\033[` or `\x1B[`) that tell the terminal to change text color or style until a reset code is printed.
+
+### Feature 7 – Recursive Listing (-R)
+
+**Q1.** In a recursive function, what is a "base case"?  
+**A1.** A base case is the condition that stops recursion. In `ls -R`, recursion stops when there are no more subdirectories to process (i.e., non-directory entries or `.` and `..`).
+
+**Q2.** Why is it essential to construct the full path before recursion?  
+**A2.** Because without the full path (`parent_dir/subdir`), the recursive call would look for the subdirectory in the wrong current directory, causing errors or infinite loops.
+
+
